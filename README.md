@@ -135,8 +135,6 @@ void someMethod(PersonRepository people) {
 그러면 위와 같이 동일한 메소드일지라도 원하는 오브젝트에 받아서 가져올 수 있게됩니다. interface, class 모두 파라미터로 사용 가능합니다.
 
 
-**********************
-
 # Json view
 
 우리는 개발을 하면서 수많은 DTO를 생성해냅니다. 비슷한 응답값일지라도 Client요구사항에 맞춰서 응답하기 위해 중복이 많더라도 비슷한 DTO를 많이 생성하게 됩니다. DTO가 늘어난다는 것은 그만큼 관련 Mapping function도 늘어날 것입니다. 그렇다면 DTO를 사용하지 않고 Client에게 원하는 필드만 노출시킬 수 있는 방법은 없는것일까요?
