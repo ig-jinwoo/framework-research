@@ -274,13 +274,7 @@ GraphQL의 Type 시스템에 대해서 조금 더 깊게 알아보고 Schame라�
 3. hero라는 오브젝트에서 name과 apperasIn이라는 필드값을 선택했습니다.
 
 
-GraphQL은 위와 같이 우리가 받게될 응답값을 우리가 예상할 수 있습니다. 즉 Client 측에서 서버 측의 데이터중에서 원하는 데이터를 선택해서 질의할 수 있다는 겁니다.
-
-하지만 여기서 한가지 의문이 생깁니다.
-
-서버에 무슨 데이터가 있는줄 알고 질의를 하나? 어떤 오브젝트가 있고 어떤 필드들이 있는지 어떻게 알수 있나? 또한 해당 필드들의 return type은 무엇인가? (String이냐 object냐)
-
-이러한 문제의 원인은 Client에서 서버가 가지고 있는 Type에 대한 metadata가 없다는 것입니다.
+GraphQL은 위와 같이 우리가 받게될 응답값을 우리가 예상할 수 있습니다. 즉 Client 측에서 서버 측의 데이터중에서 원하는 데이터를 선택해서 질의할 수 있다는 겁니다. 하지만 여기서 한가지 의문이 생깁니다. 서버에 무슨 데이터가 있는줄 알고 질의를 하나? 어떤 오브젝트가 있고 어떤 필드들이 있는지 어떻게 알수 있나? 또한 해당 필드들의 return type은 무엇인가? (String이냐 object냐).
 
 여기서 바로 Schema라는 개념이 등장합니다.
 
@@ -295,11 +289,9 @@ type Character {
 }
 ```
 
-위 Schema를 예제로 간단히 설명드리겠습니다.
+위 Schema를 예제로 간단히 설명드리겠습니다. 
 
-Character는 GraphQL Object Type으로 여러개의 필드들을 가지고 있다는 의미입니다. Schema에 있는 대부분의 type은 오브젝트입니다.
-
-name과 appearsIn은 필드 이름입니다. Character type에 대해서 쿼리를 사용할때 가져올 수 있는 필드들 입니다.
+Character는 GraphQL Object Type으로 여러개의 필드들을 가지고 있다는 의미입니다. Schema에 있는 대부분의 type은 오브젝트입니다. name과 appearsIn은 필드 이름입니다. Character type에 대해서 쿼리를 사용할때 가져올 수 있는 필드들 입니다.
 
 String은 built-in scalar type입니다. 
 
