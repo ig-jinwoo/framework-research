@@ -340,80 +340,298 @@ mutation도 쿼리와 마찬가지로 생성된 자원에 대한 필드들을 �
 
 # Spring for graphql
 
-graphql-java위에서 만들어진 Spring application에서 GraphQL을 지원하기 위해 나온 라이브러리입니다. spring graphql은 Schema-first를 지향하기 때문에 Schema를 먼저 선언한뒤에 개발을 진행하게 됩니다.
+## HTTP server
 
-GraphQL의 schema는 src/main/resources/graphql 폴더 안에 *.graphqls 형태의 파일로 정의내립니다.
+Spring for graphql은 GraphQlHttpHandler을 제공함으로써 HTTP Reqeust를 핸들링할 수 있도록 기능들을 제공합니다.
 
-직접 간단한 예제를 만들어보겠습니다.
+Spring mvc와 Spring webflux 두가지를 모두 지원합니다. 요청은 비동기식으로 처리하며 응답을 처리할때는 각각 mvc, webflux에 맞는 방식으로 처리합니다.
 
-```
-type Query {
-    bookById(id: ID): Book
-}
+GraphQL 요청을 위해서는 반드시 **Http Post** 요청이 사용되어야 하며 **"application/json"** 콘텐츠 타입을 사용해야 합니다. 
 
-type Book {
-    id: ID
-    name: String
-    pageCount: Int
-    author: Author
-}
+## FILE UPLOAD
 
-type Author {
-    id: ID
-    firstName: String
-    lastName: String
-}
-```
+Graphql은 텍스트 기반의 데이터를 주고받는데 중점을 두고 있으므로 media형태의 파일을 지원하지 않습니다.
 
-다음과 같은 Schema를 정의합니다. 여기서 전에 나온 개념을 집고 넘어가자면 Query type은 data를 fetch하기 위한 특별한 type입니다. bookById라는 필드는 Argument를 받을 수 있게 되어있고 Id를 argument로 받아서 Id에 해당하는 Book type을 리턴하게 되어 있습니다.
+다만 file upload를 위한 graphql-multipart-request-spec라는 별도의 스펙을 정의하고 있습니다. Spring for graphql이 이를 직접적으로 지원하지는 않으나 **multipart-spring-graphql** 라는 라이브러리를 사용하면 파일 업로드도 가능합니다.
 
-자 API를 만들려면 우선 API로 접근할 수 있는 Endpoint를 구성해야합니다. 기존 Rest같은 경우에는 url로 구분하여 여러개의 endpoint를 구성하였습니다. 하지만 GraphQL에서는 조금 다른 형태를 보입니다.
+## Interception
+
+Spring graphql은 HTTP 요청이 Graphql Java engine에서 처리되기전, 후에 요청을 가로채서 부가적인 작업을 하는 것이 가능합니다.
 
 ```
-package com.example.graphqlserver;
+class RequestHeaderInterceptor implements WebGraphQlInterceptor { 
 
-import org.springframework.graphql.data.method.annotation.Argument;
-import org.springframework.graphql.data.method.annotation.QueryMapping;
-import org.springframework.graphql.data.method.annotation.SchemaMapping;
-import org.springframework.stereotype.Controller;
+	@Override
+	public Mono<WebGraphQlResponse> intercept(WebGraphQlRequest request, Chain chain) {
+		String value = request.getHeaders().getFirst("myHeader");
+		request.configureExecutionInput((executionInput, builder) ->
+				builder.graphQLContext(Collections.singletonMap("myHeader", value)).build());
+		return chain.next(request);
+	}
+}
+```
+
+```
+class ResponseHeaderInterceptor implements WebGraphQlInterceptor {
+
+	@Override
+	public Mono<WebGraphQlResponse> intercept(WebGraphQlRequest request, Chain chain) { 
+		return chain.next(request).doOnNext(response -> {
+			String value = response.getExecutionInput().getGraphQLContext().get("cookieName");
+			ResponseCookie cookie = ResponseCookie.from("cookieName", value).build();
+			response.getResponseHeaders().add(HttpHeaders.SET_COOKIE, cookie.toString());
+		});
+	}
+}
 
 @Controller
+class MyCookieController {
+
+	@QueryMapping
+	Person person(GraphQLContext context) { 
+		context.put("cookieName", "123");
+		...
+	}
+}
+```
+
+위의 예제들과 같이 요청 전후로 GraphQL Context의 값들을 조작할 수 있습니다.
+
+## Schema resource
+
+Boot starter는 classpath:graphql/**에 있는 .graphqls" or ".gqls" 파일들로 존재하는 schema 파일들을 자동으로 load해줍니다.
+
+## RuntimeWiringConfigurer
+
+RuntimeWiringConfigurer은 다음과 같은 네가지 역할을 합니다.
+
+* Custom scalar types.
+* Directives handling code.
+* Default TypeResolver for interface and union types.
+
+GraphQL java는 오직 Map으로된 데이터만 직렬화가 가능합니다. 그렇기 때문에 Client의 input은 모두 Map으로 변환됩니다. 서버의 output역시 선택된 필드들에 한해서 Map으로 변환됩니다.
+
+GraphQL의 타입 시스템의 리프노드를 **scalar**라고 부릅니다. 즉 또 다른 depth가 존재하지 않는 field라는 뜻입니다.
+우리는 여기서 다양한 custom scalar type을 정의할 수 있습니다. ex) Date
+
+**directive**는 GraphQL document에서 type validation이나 런타임 실행을 대체할 수 있는 것들을 나타내는 GraphQL language입니다.
+예를들면
+
+```
+type Employee
+  id : ID
+  name : String!
+  startDate : String!
+  salary : Float
+}
+```
+
+다음과 같은 employee type에서 우리는 salary가 아무한테나 노출되는 것을 꺼려할 수 있습니다. 이러한 경우 directive를 사용한다면 보다 손쉽게 필드에 대한 런타임 제어를 가능케 해줍니다.
+
+```
+directive @auth(role : String!) on FIELD_DEFINITION
+
+type Employee
+  id : ID
+  name : String!
+  startDate : String!
+  salary : Float @auth(role : "manager")
+}
+```
+
+또 하나의 예를들면
+
+```
+directive @Size(min : Int = 0, max : Int = 2147483647, message : String = "graphql.validation.Size.message")
+                        on ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION
+
+    input Application {
+        name : String @Size(min : 3, max : 100)
+    }
+```
+
+다음과 같이 directive를 사용하여 손쉽게 필드의 사이즈를 validation할 수도 있습니다.
+
+***** 
+
+TypeResolver의 목적은 GraphQL Java가 GraphQL Interface나 Union field를 위해서 DataFetcher에 의해서 return되는 GraphQL Object의 Type을 결정할 수 있게 해줍니다. 
+The purpose of a TypeResolver in GraphQL Java is to determine the GraphQL Object type for values returned from the DataFetcher for a GraphQL Interface or Union field.
+
+ClassNameTypeResolver을 예로들어보자면 해당 TypeResolver는 class이름으로 GraphQL Object의 type을 결정해줍니다. 만약 못찾을시에 상위 클래스로 순회하면서 매칭되는 클래스 타입을 찾습니다.
+
+## Operation Caching
+
+GraphQL은 operation을 실행하기 위해서는 반드시 해당 operation을 parsing하고 validation해야합니다. 이것은 퍼포먼스에 심각한 영향을 미칠 수 있습니다. 이러한 것을 피하기 위해서는 **PreparsedDocumentProvider** 설정을 통해서 Document instance를 **캐싱**하여 재사용할 수 있습니다.
+
+## Web MVC
+
+Spring graphQL에서는 mvc servlet thread와 data fetcher의 스레드가 다를 수 있습니다. 문서에는 나와있지 않지만 비동기적으로 요청을 처리하는 방식때문에 발생하는 문제로 생각이 됩니다. Spring graphQL에서는 thread local을 propagation하는 기능을 지원합니다. 이것이 서로 다른 스레드임에도 불구하고 thread local정보를 전파해준다고 합니다.
+
+다음과 같은 설정을 통해서 가능합니다.
+
+```
+public class RequestAttributesAccessor implements ThreadLocalAccessor<RequestAttributes> {
+
+    @Override
+    public Object key() {
+        return RequestAttributesAccessor.class.getName();
+    }
+
+    @Override
+    public RequestAttributes getValue() {
+        return RequestContextHolder.getRequestAttributes();
+    }
+
+    @Override
+    public void setValue(RequestAttributes attributes) {
+        RequestContextHolder.setRequestAttributes(attributes);
+    }
+
+    @Override
+    public void reset() {
+        RequestContextHolder.resetRequestAttributes();
+    }
+
+}
+```
+
+## Exceptions
+
+GraphQL Java에서는 **DataFetcherExceptionHandler**를 제공합니다. 이는 data fetching시에 에러가 발생하면 그것을 어떻게 표현할지 결정할 수 있게 해줍니다.
+
+DataFetcherExceptionHandler는 **DataFetcherExceptionResolver**를 등록할 수 있게 지원하는데 spring for graphql에서는 여러개의 DataFetcherExceptionResolver를 등록할 수 있습니다.
+
+spring graphql의 annotation controller를 사용해서 datafetcher를 구현한 경우에는 @GraphQlExceptionHandler 어노테이션을 사용해서 손쉽게 에러를 핸들링할 수 있습니다.
+
+```
+@Controller
 public class BookController {
-    @QueryMapping
-    public Book bookById(@Argument String id) {
-        return Book.getById(id);
-    }
 
-    @SchemaMapping
-    public Author author(Book book) {
-        return Author.getById(book.authorId());
-    }
+	@QueryMapping
+	public Book bookById(@Argument Long id) {
+		// ...
+	}
+
+	@GraphQlExceptionHandler
+	public GraphQLError handle(BindException ex) {
+		return GraphQLError.newError().errorType(ErrorType.BAD_REQUEST).message("...").build();
+	}
+
 }
 ```
-GraphQL의 Controller는 다음과 같습니다. url로 정의된 endpoint가 없는것이 특징입니다. GraphQL에서는 /graphql 이라는 하나의 endpoint에서 쿼리형태로 다양한 요청을 수용할 수 있기 때문에 url로 endpoint를 나눠주는 행위는 필요하지 않습니다.
 
-GraphQL의 Controller에서 필요한 것은 Query type에 대해서 Spring에서 어떻게 동작할 것인지 정의해주는 함수가 필요합니다. @QueryMapping이라는 어노테이션을 붙여야 하며 parameter로 Schema에 존재했던 argument를 받도록 정의해야합니다.
+## Pagination
 
-여기서 method 이름은 query type에 정의되어 있는 field 이름과 같아야합니다.
+spring graphql은 커서기반의 페이지네이션을 제공하고 있습니다. paging된 resultset을 **Connection Type**이라고 부릅니다.
 
-@SchemaMapping 어노테이션은 hanlder method와 GraphQL schema의 field를 연결시켜주는 역할을 합니다. 그리고 메소드를 해당 필드에 대한 DataFetcher로 사용하겠다고 선언하는 것입니다. 필드 이름은 디폴트로 메소드 이름이 되고 type 이름은 디폴트로 메소드에 주입받는 오브젝트의 이름이 됩니다. 이 예제에서는 author가 필드가 되는 것이고 type은 default로 Book이 되는 것입니다. Schema로 표현해보자면 아래와 같습니다.
+Connection type은 edge라는 type이 존재하며 edge는 item과 cursor를 가지고 있습니다. 또한 connection type은 pageInfo라는 필드를 가지고 있습니다.
+
+우리는 페이징이 필요한 type에 Connection Type을 정의할 수 있습니다.
+
 ```
+Query {
+	books(first:Int, after:String, last:Int, before:String): BookConnection
+}
+
 type Book {
-    author: Author
+	id: ID!
+	title: String!
 }
 ```
 
-여기서 DataFetcher란 무엇인가? DataFetcher는 스키마의 어떤필드에 대해서든 가져올 수 있는 로직을 제공하는 기능입니다.
-
-즉 
+Book type 쿼리에 BookConnection타입을 리턴 타입으로 설정하면 Spring graphql은 내부적으로 다음과 같이 Connection type을 생성해줍니다.
 
 ```
-    @SchemaMapping
-    public Author author(Book book) {
-        return Author.getById(book.authorId());
+type BookConnection {
+	edges: [BookEdge]!
+	pageInfo: PageInfo!
+}
+
+type BookEdge {
+	node: Book!
+	cursor: String!
+}
+
+type PageInfo {
+	hasPreviousPage: Boolean!
+	hasNextPage: Boolean!
+	startCursor: String
+	endCursor: String
+}
+```
+
+정렬같은 경우 Spring graphql에서 제공해주는 표준적인 방법은 없으나 우리는 페이지네이션을 진행할때 sort order를 같이 넣어서 정렬된 형태의 페이지를 제공하는 것이 가능합니다. 이때는 요청으로 sort order를 따로 받을 수도 있고 default로 sort설정을 추가할 수도 있습니다.
+
+```
+    @QueryMapping
+    fun posts(subrange: ScrollSubrange): Window<Post> {
+        val scrollPosition = subrange.position().orElse(ScrollPosition.offset())
+        val limit = Limit.of(subrange.count().orElse(10))
+        val sort = Sort.by("title").ascending()
+        return postService.findAllPosts(scrollPosition, limit, sort)
+    }
+
+```
+
+## Batch Loading
+
+우리가 Book type과 Author type을 가지고 있다고 가정할때 우리는 두개의 각기 다른 type에 대해서 DataFetcher를 생성해줄 수 있습니다. 그렇지만 이는 book과 author를 같이 load하지 않기 때문에 N+1문제가 발생할 수 있습니다. 
+
+GraphQL Java는 이러한 연관 엔티티를 같이 조회하기 위해서 DataLoader를 제공합니다. spring graphql에서 batch loading을 하기 위해서는 BatchLoaderRegistry이 제공하는 팩터리 메서드를 사용하여 batch loading function들을 등록할 수 있습니다.
+
+```
+@Configuration
+public class MyConfig {
+
+	public MyConfig(BatchLoaderRegistry registry) {
+
+		registry.forTypePair(Long.class, Author.class).registerMappedBatchLoader((authorIds, env) -> {
+				// return Mono<Map<Long, Author>
+		});
+
+		// more registrations ...
+	}
+
+}
+```
+
+하지만 대부분의 케이스에서 우리는 @BatchMapping annotation을 사용해서 손쉽게 batch loading을 구현할 수 있습니다.
+
+```
+    @BatchMapping
+    fun comments(posts: List<Post>): Map<Post, List<Comment>> {
+
+        val postIds: MutableList<Long> = posts.stream().map { posts -> posts!!.id }.collect(Collectors.toList())
+        val comments: List<Comment> = commentService.findCommentsByPostIds(postIds)
+        val commentsByPost: Map<Post, List<Comment>> = comments.groupBy { it.post }
+
+        return commentsByPost
     }
 ```
-위의 코드는 Schema에서 book을 사용해서 author 필드를 가져올 수 있는 DataFetcher를 선언하는 것으로 이해할 수 있습니다.
+
+이렇게하면 일일이 DataLoader를 구현하여 registry에 등록하는 일을 하지 않아도 연관 entity를 함께 조회하는 batch loading을 구현할 수 있습니다.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
